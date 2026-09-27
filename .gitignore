@@ -1,0 +1,99 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.env/
+
+# =========================
+# Video / Image Dataset
+# =========================
+dataset/
+datasets/
+data/
+videos/
+video/
+video_dataset/
+VideoDataset/
+Sample_Videos/
+video_dataset2/
+
+# Video files
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+*.mpeg
+*.mpg
+
+# Image datasets
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.webp
+
+# =========================
+# ML / Training Outputs
+# =========================
+models/
+checkpoints/
+weights/
+runs/
+logs/
+outputs/
+results/
+
+# # Model files
+# *.pt
+# *.pth
+# *.ckpt
+# *.h5
+# *.keras
+# *.onnx
+# *.tflite
+
+# =========================
+# Jupyter
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# IDE / Editors
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# =========================
+# Python tooling
+# =========================
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# =========================
+# Secrets / Local config
+# =========================
+.env
+*.env
+*.secret
