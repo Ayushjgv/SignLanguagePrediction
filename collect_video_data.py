@@ -8,6 +8,7 @@ Features per frame (total 225):
 - 63 normalized right hand features (wrist relative to body, fingers relative to wrist)
 
 Features:
+- PARALLEL extraction across CPU cores (each worker builds its own MediaPipe detectors)
 - Auto-resume: Skips already extracted classes and videos
 - Static image mode for sampled frames to ensure 100% hand detection
 - Aspect-ratio corrected: Works identically on 16:9, 9:16, 4:3, etc.
@@ -15,14 +16,35 @@ Features:
 
 import argparse
 import os
+import queue
+import threading
+
 import cv2
 import mediapipe as mp
 import numpy as np
 from tqdm import tqdm
+
 from landmark_utils import extract_normalized_features, TOTAL_FEATURES
 
 SEQUENCE_LENGTH = 30
 
+
+def build_detectors():
+    """Create fresh MediaPipe detectors (must be per-thread)."""
+    mp_pose = mp.solutions.pose
+    mp_hands = mp.solutions.hands
+    pose_detector = mp_pose.Pose(
+        static_image_mode=True,
+        model_complexity=1,
+        enable_segmentation=False,
+        min_detection_confidence=0.5
+    )
+    hands_detector = mp_hands.Hands(
+        static_image_mode=True,
+        max_num_hands=2,
+        min_detection_confidence=0.5
+    )
+    return pose_detector, hands_detector
 
 def extract_landmarks_from_video(
     video_path,
@@ -33,6 +55,7 @@ def extract_landmarks_from_video(
 ):
     """
     Extracts normalized landmark sequence(s) from a video file.
+    Returns a list of np.ndarray, each of shape (sequence_length, TOTAL_FEATURES).
     """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -81,6 +104,35 @@ def extract_landmarks_from_video(
     return sequences
 
 
+def _worker(task_queue, result_queue, sequence_length, augment):
+    """Worker thread: builds its own detectors and processes video tasks."""
+    pose_detector, hands_detector = build_detectors()
+    try:
+        while True:
+            task = task_queue.get()
+            if task is None:
+                break
+            vid_path, out_dir, out_base = task
+            try:
+                seqs = extract_landmarks_from_video(
+                    vid_path, pose_detector, hands_detector,
+                    sequence_length=sequence_length, augment=augment
+                )
+                saved = 0
+                for s_idx, seq in enumerate(seqs):
+                    out_filename = f"{out_base}_{s_idx}.npy"
+                    np.save(os.path.join(out_dir, out_filename), seq)
+                    saved += 1
+                result_queue.put((True, vid_path, saved))
+            except Exception as e:  # noqa: BLE001
+                result_queue.put((False, vid_path, str(e)))
+            finally:
+                task_queue.task_done()
+    finally:
+        pose_detector.close()
+        hands_detector.close()
+
+
 def create_dataset_from_video_folder(
     video_folder="Video_Dataset",
     output_folder="data_video",
@@ -88,10 +140,12 @@ def create_dataset_from_video_folder(
     target_classes=None,
     max_videos_per_class=None,
     augment=False,
-    overwrite=False
+    overwrite=False,
+    num_workers=8
 ):
     """
     Processes videos from Video_Dataset and saves normalized landmark sequences.
+    Uses a thread pool (each thread with its own MediaPipe detectors) for speed.
     """
     if not os.path.exists(video_folder):
         print(f"Error: Video folder '{video_folder}' not found!")
@@ -111,60 +165,10 @@ def create_dataset_from_video_folder(
     else:
         classes = all_subdirs
 
-    # Scan existing progress
-    completed_classes = []
-    pending_classes = []
-    for c in classes:
-        c_clean = c.lower().strip()
-        out_dir = os.path.join(output_folder, c_clean)
-        in_dir = os.path.join(video_folder, c)
-        in_vids = [f for f in os.listdir(in_dir) if f.lower().endswith((".mp4", ".avi", ".mov", ".mkv"))]
-        if max_videos_per_class:
-            in_vids = in_vids[:max_videos_per_class]
-
-        if os.path.exists(out_dir) and not overwrite:
-            existing_npys = [f for f in os.listdir(out_dir) if f.endswith(".npy")]
-            existing_bases = set(f.split("_0.npy")[0] for f in existing_npys if "_0.npy" in f)
-            needed_bases = set(f"vid_{os.path.splitext(v)[0]}" for v in in_vids)
-            if needed_bases and needed_bases.issubset(existing_bases):
-                completed_classes.append(c)
-                continue
-        pending_classes.append(c)
-
-    print("=" * 65)
-    print("NORMALIZED DATASET EXTRACTION (SCALE & POSITION INVARIANT)")
-    print("=" * 65)
-    print(f"Target Classes:         {len(classes)}")
-    print(f"Already Completed:      {len(completed_classes)} classes (auto-skipping)")
-    print(f"Remaining to Process:   {len(pending_classes)} classes")
-    if completed_classes:
-        print(f"Skipping completed:     {', '.join(completed_classes[:8])}{' ...' if len(completed_classes) > 8 else ''}")
-    print("=" * 65)
-
-    if not pending_classes and not overwrite:
-        print("\nAll classes already extracted! Nothing left to process.")
-        return 0
-
-    mp_pose = mp.solutions.pose
-    mp_hands = mp.solutions.hands
-
-    pose_detector = mp_pose.Pose(
-        static_image_mode=True,
-        model_complexity=1,
-        enable_segmentation=False,
-        min_detection_confidence=0.5
-    )
-
-    hands_detector = mp_hands.Hands(
-        static_image_mode=True,
-        max_num_hands=2,
-        min_detection_confidence=0.5
-    )
-
-    total_new_saved = 0
+    # Build the full list of tasks, honoring resume/overwrite.
+    tasks = []
     total_skipped = 0
-
-    for c_idx, class_name in enumerate(pending_classes, 1):
+    for class_name in classes:
         input_class_dir = os.path.join(video_folder, class_name)
         clean_label = class_name.lower().strip()
         output_class_dir = os.path.join(output_folder, clean_label)
@@ -174,102 +178,97 @@ def create_dataset_from_video_folder(
             f for f in os.listdir(input_class_dir)
             if f.lower().endswith((".mp4", ".avi", ".mov", ".mkv"))
         ])
-
         if max_videos_per_class:
             video_files = video_files[:max_videos_per_class]
 
-        videos_to_process = []
         for vid_file in video_files:
             base_name = os.path.splitext(vid_file)[0]
             first_output = os.path.join(output_class_dir, f"vid_{base_name}_0.npy")
             if os.path.exists(first_output) and not overwrite:
                 total_skipped += 1
-            else:
-                videos_to_process.append(vid_file)
-
-        if not videos_to_process:
-            print(f"[{c_idx}/{len(pending_classes)}] Class '{class_name}': all {len(video_files)} videos already exist. Skipping.")
-            continue
-
-        print(f"\n[{c_idx}/{len(pending_classes)}] Processing '{class_name}' ({len(videos_to_process)} new / {len(video_files)} total)...")
-        class_saved = 0
-
-        for vid_file in tqdm(videos_to_process, desc=clean_label):
-            vid_path = os.path.join(input_class_dir, vid_file)
-            try:
-                seqs = extract_landmarks_from_video(
-                    vid_path,
-                    pose_detector,
-                    hands_detector,
-                    sequence_length=sequence_length,
-                    augment=augment
-                )
-            except Exception as e:
-                print(f"\nWarning: Failed to process {vid_file}: {e}")
                 continue
+            vid_path = os.path.join(input_class_dir, vid_file)
+            out_base = f"vid_{base_name}"
+            tasks.append((vid_path, output_class_dir, out_base))
 
-            base_name = os.path.splitext(vid_file)[0]
-            for s_idx, seq in enumerate(seqs):
-                out_filename = f"vid_{base_name}_{s_idx}.npy"
-                np.save(os.path.join(output_class_dir, out_filename), seq)
-                class_saved += 1
-                total_new_saved += 1
+    print("=" * 65)
+    print("NORMALIZED DATASET EXTRACTION (SCALE & POSITION INVARIANT)")
+    print("=" * 65)
+    print(f"Target Classes:         {len(classes)}")
+    print(f"Already Completed:      {total_skipped} videos (auto-skipping)")
+    print(f"Remaining to Process:   {len(tasks)} videos")
+    print(f"Parallel Workers:       {num_workers}")
+    print("=" * 65)
 
-        print(f"  Saved {class_saved} new sequences for '{class_name}'")
+    if not tasks:
+        print("\nAll classes already extracted! Nothing left to process.")
+        return 0
 
-    pose_detector.close()
-    hands_detector.close()
+    task_queue = queue.Queue()
+    result_queue = queue.Queue()
+    for t in tasks:
+        task_queue.put(t)
+
+    workers = []
+    for _ in range(max(1, num_workers)):
+        th = threading.Thread(
+            target=_worker,
+            args=(task_queue, result_queue, sequence_length, augment),
+            daemon=True
+        )
+        th.start()
+        workers.append(th)
+
+    total_new_saved = 0
+    total_failed = 0
+    pbar = tqdm(total=len(tasks), desc="Extracting")
+    processed = 0
+    while processed < len(tasks):
+        ok, vid_path, info = result_queue.get()
+        processed += 1
+        if ok:
+            total_new_saved += int(info)
+        else:
+            total_failed += 1
+            tqdm.write(f"  WARN failed {os.path.basename(vid_path)}: {info}")
+        pbar.update(1)
+    pbar.close()
+
+    for _ in workers:
+        task_queue.put(None)
+    for th in workers:
+        th.join()
 
     print("\n" + "=" * 65)
     print(f"EXTRACTION COMPLETE: {total_new_saved} new sequences saved in '{output_folder}'.")
     if total_skipped > 0:
         print(f"Skipped {total_skipped} previously extracted videos.")
+    if total_failed > 0:
+        print(f"Failed on {total_failed} videos.")
     print("=" * 65)
     return total_new_saved
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Extract normalized body pose and hand landmarks from Video_Dataset"
+        description="Extract normalized body pose and hand landmarks from Video_Dataset (parallel)"
     )
-    parser.add_argument(
-        "--video_folder",
-        default="Video_Dataset",
-        help="Folder containing class video subfolders (default: Video_Dataset)"
-    )
-    parser.add_argument(
-        "--output_folder",
-        default="data_video",
-        help="Folder to save extracted .npy feature files (default: data_video)"
-    )
-    parser.add_argument(
-        "--sequence_length",
-        type=int,
-        default=30,
-        help="Number of frames per sequence (default: 30)"
-    )
-    parser.add_argument(
-        "--classes",
-        nargs="+",
-        default=None,
-        help="Specific class names to extract (optional)"
-    )
-    parser.add_argument(
-        "--max_videos_per_class",
-        type=int,
-        default=None,
-        help="Max videos to process per class"
-    )
-    parser.add_argument(
-        "--augment",
-        action="store_true",
-        help="Generate augmented sequences from longer video clips"
-    )
-    parser.add_argument(
-        "--overwrite",
-        action="store_true",
-        help="Force re-extraction of all files"
-    )
+    parser.add_argument("--video_folder", default="Video_Dataset",
+                        help="Folder containing class video subfolders (default: Video_Dataset)")
+    parser.add_argument("--output_folder", default="data_video",
+                        help="Folder to save extracted .npy feature files (default: data_video)")
+    parser.add_argument("--sequence_length", type=int, default=30,
+                        help="Number of frames per sequence (default: 30)")
+    parser.add_argument("--classes", nargs="+", default=None,
+                        help="Specific class names to extract (optional)")
+    parser.add_argument("--max_videos_per_class", type=int, default=None,
+                        help="Max videos to process per class")
+    parser.add_argument("--augment", action="store_true",
+                        help="Generate augmented sequences from longer video clips")
+    parser.add_argument("--overwrite", action="store_true",
+                        help="Force re-extraction of all files")
+    parser.add_argument("--workers", type=int, default=8,
+                        help="Number of parallel worker threads (default: 8)")
 
     args = parser.parse_args()
 
@@ -280,9 +279,11 @@ def main():
         target_classes=args.classes,
         max_videos_per_class=args.max_videos_per_class,
         augment=args.augment,
-        overwrite=args.overwrite
+        overwrite=args.overwrite,
+        num_workers=args.workers
     )
 
 
 if __name__ == "__main__":
     main()
+

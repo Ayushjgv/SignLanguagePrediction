@@ -32,32 +32,61 @@ This pipeline trains and tests a deep learning model for sign language detection
 
 ### Step 1: Extract Landmark Data from `Video_Dataset`
 
-Run extraction on all classes:
+Run extraction on all classes (now **parallelized** across CPU cores for speed):
 ```powershell
-.\.venv\Scripts\python.exe collect_video_data.py --video_folder Video_Dataset --output_folder data
+.\.venv\Scripts\python.exe collect_video_data.py --video_folder Video_Dataset --output_folder data_video --workers 8
 ```
 
-**Optional Quick Test:** To extract only a subset of signs (for fast testing):
+**Optional:** Extract only a subset of signs (fast), e.g. the first 20 classes:
 ```powershell
-.\.venv\Scripts\python.exe collect_video_data.py --video_folder Video_Dataset --output_folder data --classes Hello Bear "Thank you" --max_videos_per_class 15
+.\.venv\Scripts\python.exe collect_video_data.py --video_folder Video_Dataset --output_folder data_video --classes Bear Break Brinjal Budget Busy Cabbage Carrot Cauliflower Chilli Clean Close Come Cook Crocodile Cry Cucumber Deer Drink Elephant Exam --workers 8
 ```
+
+Extraction auto-resumes (already-extracted videos are skipped) and runs each worker
+with its own MediaPipe detectors, so it scales with the number of CPU cores.
 
 ---
 
 ### Step 2: Train the Model
 
-Train the model on the extracted landmark data:
+Train on **all extracted classes**:
 ```powershell
-.\.venv\Scripts\python.exe train_video_model.py --data_folder data --epochs 50 --batch_size 16 --save_path video_model.pth
+.\.venv\Scripts\python.exe train_video_model.py --data_folder data_video --epochs 50 --batch_size 16 --save_path video_model.pth
+```
+
+**Train on a specific subset of classes** (e.g. the first 20):
+```powershell
+.\.venv\Scripts\python.exe train_video_model.py --data_folder data_video --classes Bear Break Brinjal Budget Busy Cabbage Carrot Cauliflower Chilli Clean Close Come Cook Crocodile Cry Cucumber Deer Drink Elephant Exam --epochs 60 --batch_size 16 --save_path video_model.pth
 ```
 
 **Training Options:**
 - `--use_cnn`: Train a hybrid CNN-LSTM model
+- `--classes A B C`: Restrict training to specific class folders (case-insensitive)
 - `--epochs 60`: Number of training epochs (default: 50)
 - `--batch_size 16`: Batch size (default: 16)
 - `--hidden_size 128`: Number of LSTM units (default: 128)
 
+> **Important:** The model can only predict classes it was trained on. If you test a
+> video of a sign that was not included in training, it will be forced to guess among
+> the trained classes. Make sure the classes you care about are extracted (Step 1)
+> **and** included in training (Step 2).
+
 The best model checkpoint and a training plot (`training_plot.png`) will be automatically saved.
+
+---
+
+### Step 2.5: Evaluate the Model (optional)
+
+Report held-out accuracy (on truly unseen recordings) and a per-class breakdown:
+```powershell
+.\.venv\Scripts\python.exe evaluate_model.py --model video_model.pth
+```
+
+Quickly predict the label of individual videos:
+```powershell
+.\.venv\Scripts\python.exe test_predictions.py
+```
+
 
 ---
 

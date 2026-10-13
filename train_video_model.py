@@ -51,12 +51,54 @@ class SignDataset(Dataset):
             noise = np.random.normal(0, 0.008, seq.shape)
             seq += noise * mask
 
+            # 4. DETECTION-DROPOUT augmentation (real-world robustness).
+            #    Real videos often have MediaPipe drop a hand or the whole pose
+            #    for some frames (features become all-zero). Training data has
+            #    ~100% detection, so we simulate dropouts so the model does not
+            #    break when a hand/pose is missing at test time.
+            seq_len, feat_dim = seq.shape
+            pose_dim = 99            # 33 * 3
+            left_dim = 63            # 21 * 3  -> features [99:162]
+            right_dim = 63           # 21 * 3  -> features [162:225]
+
+            # 4a. Randomly drop the LEFT hand for a random contiguous span
+            if np.random.rand() < 0.25:
+                a = np.random.randint(0, seq_len)
+                b = np.random.randint(a + 1, seq_len + 1)
+                seq[a:b, pose_dim:pose_dim + left_dim] = 0.0
+
+            # 4b. Randomly drop the RIGHT hand for a random contiguous span
+            if np.random.rand() < 0.25:
+                a = np.random.randint(0, seq_len)
+                b = np.random.randint(a + 1, seq_len + 1)
+                seq[a:b, pose_dim + left_dim:pose_dim + left_dim + right_dim] = 0.0
+
+            # 4c. Randomly drop BOTH hands (as if no hands detected)
+            if np.random.rand() < 0.15:
+                a = np.random.randint(0, seq_len)
+                b = np.random.randint(a + 1, seq_len + 1)
+                seq[a:b, pose_dim:] = 0.0
+
+            # 4d. Randomly drop the whole pose block for a short span
+            if np.random.rand() < 0.15:
+                a = np.random.randint(0, seq_len)
+                b = np.random.randint(a + 1, seq_len + 1)
+                seq[a:b, :pose_dim] = 0.0
+
+            # 4e. Randomly blank a few individual frames entirely
+            if np.random.rand() < 0.30:
+                n_blank = np.random.randint(1, max(2, seq_len // 5))
+                blank_idx = np.random.choice(seq_len, size=n_blank, replace=False)
+                seq[blank_idx, :] = 0.0
+
         return torch.tensor(seq, dtype=torch.float32), torch.tensor(self.y[idx], dtype=torch.long)
 
 
-def load_data(data_folder="data_video", sequence_length=30, features_per_frame=225):
+def load_data(data_folder="data_video", sequence_length=30, features_per_frame=225, target_classes=None):
     """
     Load extracted landmark sequences from data_folder, tracking recording groups to prevent data leakage.
+
+    If target_classes is provided, only those class folders are loaded (case-insensitive match).
     """
     if not os.path.exists(data_folder):
         print(f"Error: Data folder '{data_folder}' does not exist.")
@@ -71,6 +113,11 @@ def load_data(data_folder="data_video", sequence_length=30, features_per_frame=2
         d for d in os.listdir(data_folder)
         if os.path.isdir(os.path.join(data_folder, d))
     ])
+
+    # Optional restriction to a subset of classes (case-insensitive)
+    if target_classes:
+        wanted = {c.lower().strip() for c in target_classes}
+        candidates = [d for d in candidates if d.lower().strip() in wanted]
 
     for label in candidates:
         folder = os.path.join(data_folder, label)
@@ -122,12 +169,12 @@ def load_data(data_folder="data_video", sequence_length=30, features_per_frame=2
     return np.array(X, dtype=np.float32), np.array(y, dtype=np.int64), np.array(groups), labels
 
 
-def create_dataset(data_folder="data_video", sequence_length=30, features_per_frame=225, test_size=0.2, batch_size=16):
+def create_dataset(data_folder="data_video", sequence_length=30, features_per_frame=225, test_size=0.2, batch_size=16, target_classes=None):
     """
     Loads data and creates PyTorch train and test DataLoaders with Group-Based Splitting
     to prevent duplicate tilt variations from leaking between train and test sets.
     """
-    X, y, groups, labels = load_data(data_folder, sequence_length, features_per_frame)
+    X, y, groups, labels = load_data(data_folder, sequence_length, features_per_frame, target_classes=target_classes)
 
     if len(X) == 0:
         print("No valid data loaded. Run collect_video_data.py first.")
@@ -335,6 +382,8 @@ def main():
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size (default: 16)")
     parser.add_argument("--learning_rate", type=float, default=0.001, help="Learning rate (default: 0.001)")
     parser.add_argument("--use_cnn", action="store_true", help="Use CNN-LSTM architecture")
+    parser.add_argument("--classes", nargs="+", default=None,
+                        help="Optional subset of class names to train on (case-insensitive)")
     parser.add_argument("--save_path", default="video_model.pth", help="Model save path (default: video_model.pth)")
 
     args = parser.parse_args()
@@ -343,7 +392,8 @@ def main():
         data_folder=args.data_folder,
         sequence_length=args.sequence_length,
         features_per_frame=args.features_per_frame,
-        batch_size=args.batch_size
+        batch_size=args.batch_size,
+        target_classes=args.classes
     )
 
     if train_loader is None or len(labels) == 0:
