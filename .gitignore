@@ -25,6 +25,10 @@ video_dataset/
 VideoDataset/
 Sample_Videos/
 video_dataset2/
+test_videos/
+scratch/
+data_video/
+notebooks/
 
 # Video files
 *.mp4
