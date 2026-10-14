@@ -62,9 +62,18 @@ Train on **all extracted classes**:
 **Training Options:**
 - `--use_cnn`: Train a hybrid CNN-LSTM model
 - `--classes A B C`: Restrict training to specific class folders (case-insensitive)
+- `--mirror`: **Enable horizontal-mirror augmentation on the TRAINING set** so the
+  model recognizes a sign regardless of which hand is used (handedness invariance).
+  Recommended. Never applied to validation/test data.
+- `--mirror_prob 0.5`: Probability of mirroring a given mirrorable training sample
 - `--epochs 60`: Number of training epochs (default: 50)
 - `--batch_size 16`: Batch size (default: 16)
 - `--hidden_size 128`: Number of LSTM units (default: 128)
+
+**Recommended full-dataset training with handedness invariance:**
+```powershell
+.\.venv\Scripts\python.exe train_video_model.py --data_folder data_video --epochs 70 --batch_size 16 --mirror --mirror_prob 0.5 --save_path video_model_mirror.pth
+```
 
 > **Important:** The model can only predict classes it was trained on. If you test a
 > video of a sign that was not included in training, it will be forced to guess among
@@ -75,7 +84,40 @@ The best model checkpoint and a training plot (`training_plot.png`) will be auto
 
 ---
 
-### Step 2.5: Evaluate the Model (optional)
+### Step 2.5: Mirror augmentation & safety
+
+Mirror augmentation teaches the model that a sign performed with the left hand is
+the same sign as when performed with the right hand. It is implemented in
+`mirror_utils.py` and was verified empirically against `cv2.flip(frame, 1)`:
+
+- the horizontal (x) coordinate of every landmark is negated,
+- depth (z) and vertical (y) are preserved,
+- the anatomical LEFT and RIGHT **pose** landmarks are swapped,
+- the LEFT-hand and RIGHT-hand **feature blocks** are swapped,
+- mirroring is an involution: `mirror(mirror(x)) == x`.
+
+It is applied **only to training samples**, **only for labels whose meaning is
+handedness-invariant**. Directional/asymmetric signs must be excluded. Configure
+this in `mirror_utils.py`:
+- `MIRROR_ALLOWLIST` – if non-empty, ONLY these labels are mirrored (opt-in).
+- `MIRROR_EXCLUDE` – labels that must NEVER be mirrored.
+
+By default (empty allowlist) all labels except `MIRROR_EXCLUDE` are mirrored, which
+is appropriate for this single-signer dataset where every sign has no left/right
+directional contrast. If you later collect genuinely directional signs, switch to
+opt-in mode by populating `MIRROR_ALLOWLIST`.
+
+Run the mirror unit tests:
+```powershell
+.\.venv\Scripts\python.exe test_mirror.py
+```
+
+Verify handedness invariance of a trained model (original vs. horizontally-mirrored
+features should yield the same prediction):
+```powershell
+.\.venv\Scripts\python.exe test_handedness.py --model video_model_mirror.pth
+```
+
 
 Report held-out accuracy (on truly unseen recordings) and a per-class breakdown:
 ```powershell

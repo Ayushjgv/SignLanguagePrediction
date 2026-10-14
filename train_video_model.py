@@ -19,17 +19,26 @@ from sklearn.model_selection import GroupShuffleSplit, train_test_split
 from torch.utils.data import DataLoader, Dataset
 
 from video_model import BodySignCNNLSTM, BodySignLSTM, save_model
+from mirror_utils import mirror_sequence, is_mirrorable
 
 
 class SignDataset(Dataset):
     """
     Dataset with on-the-fly landmark augmentation to prevent overfitting.
+
+    Augmentation (train only):
+      - scale / translation / noise jitter
+      - detection-dropout (simulate MediaPipe dropping a hand or the pose)
+      - horizontal mirror (handedness invariance), only for mirrorable labels
     """
 
-    def __init__(self, X, y, augment=False):
+    def __init__(self, X, y, labels, augment=False, mirror=False, mirror_prob=0.5):
         self.X = X
         self.y = y
+        self.labels = labels              # list mapping class index -> label string
         self.augment = augment
+        self.mirror = mirror              # only ever True for the training split
+        self.mirror_prob = mirror_prob
 
     def __len__(self):
         return len(self.X)
@@ -90,6 +99,16 @@ class SignDataset(Dataset):
                 n_blank = np.random.randint(1, max(2, seq_len // 5))
                 blank_idx = np.random.choice(seq_len, size=n_blank, replace=False)
                 seq[blank_idx, :] = 0.0
+
+            # 5. HORIZONTAL MIRROR (handedness invariance). Training only, and
+            #    only for labels whose meaning is invariant to which hand is
+            #    used. The mirrored sample keeps the SAME label and stays in the
+            #    same source recording group (mirroring is applied on-the-fly,
+            #    so it never creates a new file or leaks across splits).
+            if self.mirror:
+                label = self.labels[int(self.y[idx])]
+                if is_mirrorable(label) and np.random.rand() < self.mirror_prob:
+                    seq = mirror_sequence(seq)
 
         return torch.tensor(seq, dtype=torch.float32), torch.tensor(self.y[idx], dtype=torch.long)
 
@@ -169,10 +188,14 @@ def load_data(data_folder="data_video", sequence_length=30, features_per_frame=2
     return np.array(X, dtype=np.float32), np.array(y, dtype=np.int64), np.array(groups), labels
 
 
-def create_dataset(data_folder="data_video", sequence_length=30, features_per_frame=225, test_size=0.2, batch_size=16, target_classes=None):
+def create_dataset(data_folder="data_video", sequence_length=30, features_per_frame=225, test_size=0.2, batch_size=16, target_classes=None, mirror=False, mirror_prob=0.5):
     """
     Loads data and creates PyTorch train and test DataLoaders with Group-Based Splitting
     to prevent duplicate tilt variations from leaking between train and test sets.
+
+    If mirror=True, the TRAINING dataset applies horizontal-mirror augmentation
+    (handedness invariance) on-the-fly. The test dataset is never mirrored or
+    otherwise augmented.
     """
     X, y, groups, labels = load_data(data_folder, sequence_length, features_per_frame, target_classes=target_classes)
 
@@ -207,8 +230,8 @@ def create_dataset(data_folder="data_video", sequence_length=30, features_per_fr
     print(f"Training samples: {len(X_train)}")
     print(f"Testing samples:  {len(X_test)} (truly unseen video recordings)")
 
-    train_dataset = SignDataset(X_train, y_train, augment=True)
-    test_dataset = SignDataset(X_test, y_test, augment=False)
+    train_dataset = SignDataset(X_train, y_train, labels, augment=True, mirror=mirror, mirror_prob=mirror_prob)
+    test_dataset = SignDataset(X_test, y_test, labels, augment=False, mirror=False)
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
@@ -384,6 +407,11 @@ def main():
     parser.add_argument("--use_cnn", action="store_true", help="Use CNN-LSTM architecture")
     parser.add_argument("--classes", nargs="+", default=None,
                         help="Optional subset of class names to train on (case-insensitive)")
+    parser.add_argument("--mirror", action="store_true",
+                        help="Enable horizontal-mirror augmentation on the TRAINING set "
+                             "(teaches handedness invariance). Never applied to test data.")
+    parser.add_argument("--mirror_prob", type=float, default=0.5,
+                        help="Probability of mirroring a given mirrorable training sample (default: 0.5)")
     parser.add_argument("--save_path", default="video_model.pth", help="Model save path (default: video_model.pth)")
 
     args = parser.parse_args()
@@ -393,7 +421,9 @@ def main():
         sequence_length=args.sequence_length,
         features_per_frame=args.features_per_frame,
         batch_size=args.batch_size,
-        target_classes=args.classes
+        target_classes=args.classes,
+        mirror=args.mirror,
+        mirror_prob=args.mirror_prob
     )
 
     if train_loader is None or len(labels) == 0:
