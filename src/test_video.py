@@ -26,7 +26,7 @@ SEQUENCE_LENGTH = 30
 
 def test_video(
     video_path,
-    model_path="video_model.pth",
+    model_path="models/video_model.pth",
     show=True,
     output_video_path=None,
     confidence_threshold=0.3
@@ -267,7 +267,7 @@ def main():
         description="Test sign language detection on video with normalized features"
     )
     parser.add_argument("video", help="Path to input video file")
-    parser.add_argument("--model", default="video_model.pth", help="Path to trained model")
+    parser.add_argument("--model", default="models/video_model.pth", help="Path to trained model")
     parser.add_argument("--no_show", action="store_true", help="Disable interactive display window")
     parser.add_argument("--output_video", default=None, help="Save annotated output video")
     parser.add_argument("--threshold", type=float, default=0.3, help="Confidence threshold")

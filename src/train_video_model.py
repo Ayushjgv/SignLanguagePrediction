@@ -249,7 +249,7 @@ def train_model(
     num_epochs=50,
     learning_rate=0.001,
     use_cnn=False,
-    save_path="video_model.pth"
+    save_path="models/video_model.pth"
 ):
     """
     Trains the sign language model with regularization to avoid overfitting.
@@ -412,7 +412,7 @@ def main():
                              "(teaches handedness invariance). Never applied to test data.")
     parser.add_argument("--mirror_prob", type=float, default=0.5,
                         help="Probability of mirroring a given mirrorable training sample (default: 0.5)")
-    parser.add_argument("--save_path", default="video_model.pth", help="Model save path (default: video_model.pth)")
+    parser.add_argument("--save_path", default="models/video_model.pth", help="Model save path (default: models/video_model.pth)")
 
     args = parser.parse_args()
 

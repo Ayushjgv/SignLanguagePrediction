@@ -48,8 +48,8 @@ notebooks/
 
 # =========================
 # ML / Training Outputs
-# =========================
-models/
+# # =========================
+# models/
 checkpoints/
 weights/
 runs/

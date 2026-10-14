@@ -29,7 +29,7 @@ SEQUENCE_LENGTH = 30
 
 
 def run_realtime_detection(
-    model_path="video_model.pth",
+    model_path="models/video_model.pth",
     camera_index=0,
     confidence_threshold=0.4,
     smoothing_window=5
@@ -200,7 +200,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Real-time sign language detection with normalized features"
     )
-    parser.add_argument("--model", default="video_model.pth", help="Path to trained model")
+    parser.add_argument("--model", default="models/video_model.pth", help="Path to trained model")
     parser.add_argument("--camera", type=int, default=0, help="Webcam device index")
     parser.add_argument("--threshold", type=float, default=0.4, help="Confidence threshold")
     parser.add_argument("--smoothing", type=int, default=5, help="Smoothing window size")

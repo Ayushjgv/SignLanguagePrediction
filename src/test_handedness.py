@@ -59,7 +59,7 @@ def predict(arr, model, labels):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default="video_model_mirror.pth")
+    ap.add_argument("--model", default="models/video_model_mirror.pth")
     ap.add_argument("--classes", nargs="+",
                     default=["crocodile", "carrot", "cook", "bear", "tiger", "hello"])
     args = ap.parse_args()

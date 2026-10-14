@@ -25,7 +25,7 @@ for cls in test_classes:
         print(f"{cls:12s} -> SKIP (no videos)")
         continue
     path = os.path.join(src_dir, vids[0])
-    label, conf = predict_video(path, "video_model.pth")
+    label, conf = predict_video(path, "models/video_model.pth")
     total += 1
     mark = "OK" if label == cls else "MISMATCH"
     if label == cls:

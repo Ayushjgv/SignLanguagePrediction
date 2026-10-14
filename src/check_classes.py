@@ -9,7 +9,7 @@ import os
 import argparse
 import torch
 
-def inspect_classes(model_path="video_model.pth", data_folder="data_video", video_folder="Video_Dataset"):
+def inspect_classes(model_path="models/video_model.pth", data_folder="data_video", video_folder="Video_Dataset"):
     print("=" * 65)
     print("SIGN LANGUAGE CLASS INSPECTOR")
     print("=" * 65)
@@ -55,7 +55,7 @@ def inspect_classes(model_path="video_model.pth", data_folder="data_video", vide
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Inspect sign language classes")
-    parser.add_argument("--model", default="video_model.pth", help="Model file path")
+    parser.add_argument("--model", default="models/video_model.pth", help="Model file path")
     parser.add_argument("--data", default="data_video", help="Extracted data folder")
     parser.add_argument("--videos", default="Video_Dataset", help="Raw video folder")
     args = parser.parse_args()

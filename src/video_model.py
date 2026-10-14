@@ -119,7 +119,7 @@ class BodySignCNNLSTM(nn.Module):
         return out
 
 
-def save_model(model, labels, filename="video_model.pth", **kwargs):
+def save_model(model, labels, filename="models/video_model.pth", **kwargs):
     """Save model checkpoint with architecture parameters and class labels."""
     checkpoint = {
         "model_state": model.state_dict(),
@@ -133,7 +133,7 @@ def save_model(model, labels, filename="video_model.pth", **kwargs):
     torch.save(checkpoint, filename)
 
 
-def load_model(filename="video_model.pth", device="cpu"):
+def load_model(filename="models/video_model.pth", device="cpu"):
     """Load model checkpoint and restore architecture and class labels."""
     checkpoint = torch.load(filename, map_location=device)
 

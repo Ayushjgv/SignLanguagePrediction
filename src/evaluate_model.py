@@ -21,7 +21,7 @@ from landmark_utils import extract_normalized_features
 import cv2
 
 
-def evaluate_holdout(data_folder="data_video", model_path="video_model.pth", seq_len=30):
+def evaluate_holdout(data_folder="data_video", model_path="models/video_model.pth", seq_len=30):
     from sklearn.model_selection import GroupShuffleSplit
 
     model, labels = load_model(model_path)
@@ -64,7 +64,7 @@ def evaluate_holdout(data_folder="data_video", model_path="video_model.pth", seq
     return acc
 
 
-def predict_video(video_path, model_path="video_model.pth", seq_len=30):
+def predict_video(video_path, model_path="models/video_model.pth", seq_len=30):
     model, labels = load_model(model_path)
     model.eval()
     pose_detector, hands_detector = build_detectors()
@@ -100,7 +100,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_folder", default="data_video")
-    parser.add_argument("--model", default="video_model.pth")
+    parser.add_argument("--model", default="models/video_model.pth")
     parser.add_argument("--video", default=None, help="Optional single video to predict")
     args = parser.parse_args()
 
