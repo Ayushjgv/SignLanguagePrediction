@@ -32,8 +32,22 @@ def run_realtime_detection(
     model_path="models/video_model.pth",
     camera_index=0,
     confidence_threshold=0.4,
-    smoothing_window=5
+    smoothing_window=5,
+    history_len=75,
+    infer_stride=3
 ):
+    """
+    history_len  : number of recent frames kept. For each inference we
+                   linspace-sample SEQUENCE_LENGTH frames spread across this
+                   whole window -- matching how the model was trained (30
+                   frames across the full gesture). A short 30-frame buffer
+                   only captures ~1s and hurts accuracy; ~60-90 frames (2-3s)
+                   works best. Must be >= SEQUENCE_LENGTH.
+    infer_stride : run inference every N frames (reduces jitter + CPU load).
+    """
+    if history_len < SEQUENCE_LENGTH:
+        history_len = SEQUENCE_LENGTH
+
     if not os.path.exists(model_path):
         print(f"Error: Model file '{model_path}' not found! Train the model first.")
         return
@@ -67,8 +81,11 @@ def run_realtime_detection(
         min_tracking_confidence=0.5
     )
 
-    sequence_buffer = deque(maxlen=SEQUENCE_LENGTH)
+    # Long history buffer: keep HISTORY_LEN recent frames and linspace-sample
+    # SEQUENCE_LENGTH of them for each inference (matches training).
+    sequence_buffer = deque(maxlen=history_len)
     prediction_history = deque(maxlen=smoothing_window)
+    frame_counter = 0
 
     draw_landmarks = True
     current_prediction = "Waiting for gesture..."
@@ -106,18 +123,24 @@ def run_realtime_detection(
             draw_skeleton(frame, pose_res, hands_res)
 
         sequence_buffer.append(frame_features)
+        frame_counter += 1
 
-        # Inference
-        if len(sequence_buffer) == SEQUENCE_LENGTH:
+        # Inference: only once the history buffer is full, and only every
+        # `infer_stride` frames (reduces jitter and CPU load).
+        if len(sequence_buffer) == history_len and frame_counter % infer_stride == 0:
             buf_arr = np.array(sequence_buffer, dtype=np.float32)
-            hands_activity = np.count_nonzero(buf_arr[:, 99:])
+            # Sample SEQUENCE_LENGTH frames spread across the WHOLE buffer,
+            # exactly like training. This is the key realtime accuracy fix.
+            sample_idx = np.linspace(0, history_len - 1, SEQUENCE_LENGTH, dtype=int)
+            seq_arr = buf_arr[sample_idx]
+            hands_activity = np.count_nonzero(seq_arr[:, 99:])
 
             if hands_activity < 40:
                 current_prediction = "Idle (Raise hands to sign)"
                 current_confidence = 0.0
                 top3_candidates = []
             else:
-                input_tensor = torch.tensor(buf_arr).unsqueeze(0)
+                input_tensor = torch.tensor(seq_arr).unsqueeze(0)
                 with torch.no_grad():
                     output = model(input_tensor)
                     probabilities = torch.softmax(output, dim=1)[0].cpu().numpy()
@@ -146,8 +169,8 @@ def run_realtime_detection(
         cv2.rectangle(frame, (15, 15), (15 + banner_w, 15 + banner_h), (0, 220, 110), 2)
 
         buf_len = len(sequence_buffer)
-        buf_pct = buf_len / SEQUENCE_LENGTH
-        cv2.putText(frame, f"FPS: {fps:4.1f} | Buffer: {buf_len}/{SEQUENCE_LENGTH}", (30, 42),
+        buf_pct = buf_len / history_len
+        cv2.putText(frame, f"FPS: {fps:4.1f} | Buffer: {buf_len}/{history_len}", (30, 42),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (180, 180, 180), 1)
 
         bar_x, bar_y, bar_w, bar_h = 30, 52, 200, 8
@@ -200,10 +223,15 @@ def main():
     parser = argparse.ArgumentParser(
         description="Real-time sign language detection with normalized features"
     )
-    parser.add_argument("--model", default="models/video_model.pth", help="Path to trained model")
+    parser.add_argument("--model", default="models/video_model_mirror.pth", help="Path to trained model")
     parser.add_argument("--camera", type=int, default=0, help="Webcam device index")
     parser.add_argument("--threshold", type=float, default=0.4, help="Confidence threshold")
     parser.add_argument("--smoothing", type=int, default=5, help="Smoothing window size")
+    parser.add_argument("--buffer", type=int, default=75,
+                        help="History buffer length in frames (60-90 recommended; ~2-3s). "
+                             "30 frames spread are sampled across it for each prediction.")
+    parser.add_argument("--stride", type=int, default=3,
+                        help="Run inference every N frames (higher = less jitter, less CPU)")
 
     args = parser.parse_args()
 
@@ -211,7 +239,9 @@ def main():
         model_path=args.model,
         camera_index=args.camera,
         confidence_threshold=args.threshold,
-        smoothing_window=args.smoothing
+        smoothing_window=args.smoothing,
+        history_len=args.buffer,
+        infer_stride=args.stride
     )
 
 

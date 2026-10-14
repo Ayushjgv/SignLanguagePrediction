@@ -92,6 +92,19 @@ pip install -r requirements.txt
 .\.venv\Scripts\python.exe src\realtime_detect.py --model models/video_model_mirror.pth --camera 0
 ```
 
+> **Realtime accuracy tip — the buffer matters.** The model was trained on 30
+> frames spread across the *whole* gesture (4–7s). A 30-*consecutive*-frame
+> buffer only covers ~1s and gives poor accuracy. `realtime_detect.py` therefore
+> keeps a longer history (`--buffer`, default **75** frames ≈ 2.5s) and samples
+> 30 frames across it for each prediction — this matches training and is the
+> single biggest realtime improvement. Tune with `--buffer 60..90` and
+> `--stride 3` (infer every N frames). Hold a sign steady for ~2–3 seconds.
+
+To test the realtime logic on a video file (no webcam needed):
+```powershell
+.\.venv\Scripts\python.exe src\simulate_realtime.py --video test_videos/drink.mp4 --expect drink
+```
+
 ### Evaluate / inspect
 ```powershell
 .\.venv\Scripts\python.exe src\evaluate_model.py --model models/video_model_mirror.pth

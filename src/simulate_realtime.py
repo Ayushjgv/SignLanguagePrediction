@@ -34,6 +34,8 @@ def main():
     ap.add_argument("--expect", default=None)
     ap.add_argument("--threshold", type=float, default=0.4)
     ap.add_argument("--smoothing", type=int, default=5)
+    ap.add_argument("--buffer", type=int, default=75)
+    ap.add_argument("--stride", type=int, default=3)
     args = ap.parse_args()
 
     if not os.path.exists(args.model):
@@ -54,7 +56,9 @@ def main():
     hands_detector = mp_hands.Hands(static_image_mode=False, max_num_hands=2,
                                     min_detection_confidence=0.5, min_tracking_confidence=0.5)
 
-    sequence_buffer = deque(maxlen=SEQUENCE_LENGTH)
+    history_len = max(SEQUENCE_LENGTH, args.buffer)
+
+    sequence_buffer = deque(maxlen=history_len)
     prediction_history = deque(maxlen=args.smoothing)
     current_prediction = "Waiting for gesture..."
     current_confidence = 0.0
@@ -69,15 +73,18 @@ def main():
 
         frame_features, _, _ = extract_normalized_features(frame, pose_detector, hands_detector)
         sequence_buffer.append(frame_features)
+        frame_idx += 1
 
-        if len(sequence_buffer) == SEQUENCE_LENGTH:
+        if len(sequence_buffer) == history_len and frame_idx % args.stride == 0:
             buf_arr = np.array(sequence_buffer, dtype=np.float32)
-            hands_activity = np.count_nonzero(buf_arr[:, 99:])
+            sample_idx = np.linspace(0, history_len - 1, SEQUENCE_LENGTH, dtype=int)
+            seq_arr = buf_arr[sample_idx]
+            hands_activity = np.count_nonzero(seq_arr[:, 99:])
             if hands_activity < 40:
                 current_prediction = "Idle"
                 current_confidence = 0.0
             else:
-                input_tensor = torch.tensor(buf_arr).unsqueeze(0)
+                input_tensor = torch.tensor(seq_arr).unsqueeze(0)
                 with torch.no_grad():
                     output = model(input_tensor)
                     probabilities = torch.softmax(output, dim=1)[0].cpu().numpy()
@@ -93,7 +100,6 @@ def main():
                     current_confidence = top_confidence
                 pred_counts[current_prediction] = pred_counts.get(current_prediction, 0) + 1
 
-        frame_idx += 1
         if frame_idx % 30 == 0:
             print(f"  frame {frame_idx:4d} -> {current_prediction} ({current_confidence*100:.1f}%)")
 
