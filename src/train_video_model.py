@@ -10,6 +10,7 @@ Features:
 """
 
 import argparse
+import json
 import os
 import matplotlib.pyplot as plt
 import numpy as np
@@ -443,6 +444,12 @@ def main():
     )
 
     plot_history(history, save_path="training_plot.png")
+
+    os.makedirs("output", exist_ok=True)
+    history_json = os.path.join("output", "training_history.json")
+    with open(history_json, "w") as f:
+        json.dump(history, f, indent=2)
+    print(f"Training history saved to '{history_json}'")
 
 
 if __name__ == "__main__":

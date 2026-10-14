@@ -111,6 +111,36 @@ To test the realtime logic on a video file (no webcam needed):
 .\.venv\Scripts\python.exe src\check_classes.py --model models/video_model_mirror.pth
 ```
 
+### Generate all statistics & figures (`images/`)
+```powershell
+.\.venv\Scripts\python.exe src\generate_stats.py
+```
+Writes 15 publication-style figures to `images/`, covering every aspect of the
+project:
+
+| # | Figure | What it shows |
+|---|--------|---------------|
+| 01 | `class_distribution` | sequences per class (61 classes) |
+| 02 | `group_split` | leak-free train/test split by recording group |
+| 03 | `feature_detection` | pose & hand activation per class |
+| 04 | `model_architecture` | **LSTM architecture diagram** (input → LSTM → head → softmax) |
+| 05 | `model_parameters` | trainable-parameter count per module |
+| 06 | `training_curves` | train/test loss & accuracy over epochs |
+| 07 | `confusion_matrix` | row-normalized 61×61 confusion matrix |
+| 08 | `per_class_accuracy` | per-class accuracy (sorted) |
+| 09 | `per_class_prf` | per-class precision / recall / F1 |
+| 10 | `metrics_summary` | overall & balanced accuracy, macro/weighted F1, top-5 |
+| 11 | `model_comparison` | plain vs mirror model on identical unseen data |
+| 12 | `handedness_invariance` | prediction stability under mirroring (real videos) |
+| 13 | `buffer_strategy` | realtime buffer size vs accuracy (real videos) |
+| 14 | `top_confusions` | most-confused class pairs |
+| 15 | `tsne_features` | t-SNE of the learned 64-D features |
+
+Evaluation figures use the same leak-free group split as training
+(`GroupShuffleSplit(test_size=0.2, random_state=42)`); the mirror model scores
+**99.31% accuracy / 99.54% balanced / 0.994 macro-F1 / 100% top-5** on unseen
+recordings.
+
 ### Tests
 ```powershell
 .\.venv\Scripts\python.exe src\test_mirror.py            # mirror unit tests
